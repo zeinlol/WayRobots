@@ -70,7 +70,7 @@ def fetch_content(ts, target):
 def wayback_find_robots(host):
     content = requests.get(
         "http://web.archive.org/cdx/m_search/cdx?url=*.{}/*&output=txt&fl=original&collapse=urlkey".format(
-            host)).content
+            host)).content.decode("utf-8")
     robots_files = re.findall(r".*?.%s.*/robots\.txt" % host, content)
     return robots_files
 
