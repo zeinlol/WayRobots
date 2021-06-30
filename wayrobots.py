@@ -1,46 +1,15 @@
-from colorama import Fore, init
 import argparse
-import requests
-import time
 import re
+import time
 
-init(autoreset=True)
+import requests
+
 log = ""
 
 
 def pprint(out):
     global log
     log += out + "\n"
-
-    out = " " + out
-    if "[ERROR]" in out:
-        out = out.replace("[ERROR]", "[%sERROR%s]" % (Fore.RED, Fore.RESET))
-
-    if "[WARNING]" in out:
-        out = out.replace("[WARNING]", "[%sWARNING]%s" % (Fore.LIGHTWHITE_EX, Fore.YELLOW))
-
-    if "[robots.txt]" in out:
-        out = out.replace("[robots.txt]", "[%srobots.txt%s]" % (Fore.LIGHTBLACK_EX, Fore.RESET))
-
-    if "|_->" in out:
-        out = out.replace("->", "->%s" % (Fore.LIGHTBLUE_EX))
-
-    if "|_-->" in out:
-            if ":   200" in out:
-                out = out.replace("|_-->", "%s|_-->%s" % (Fore.LIGHTGREEN_EX, Fore.GREEN))
-            elif ":   30" in out:
-                out = out.replace("|_-->", "%s|_-->%s" % (Fore.LIGHTGREEN_EX, Fore.YELLOW))
-            else:
-                out = out.replace("|_-->", "%s|_-->%s" % (Fore.LIGHTGREEN_EX, Fore.RED))
-
-    if "*-" in out:
-        out = out.replace("*-", "%s*%s-%s" % (Fore.BLUE, Fore.RED, Fore.LIGHTWHITE_EX))
-
-    if ":[" in out:
-        out = out.replace(":[", ":[%s" % Fore.LIGHTRED_EX)
-        out = out.replace("]", "%s]" % Fore.WHITE)
-    if "=>" in out:
-        out = out.replace("=>" , "%s=%s>%s" % (Fore.LIGHTBLACK_EX,Fore.RED,Fore.LIGHTWHITE_EX))
     print(out)
 
 
@@ -58,21 +27,31 @@ def fetch_content(ts, target):
     ts_dirs = []
     for timestap in ts:
         try:
-            content = requests.get("http://web.archive.org/web/{}if_/{}".format(timestap, target)).content
+            content = requests.get("http://web.archive.org/web/{}if_/{}".format(timestap, target)).content.decode(
+                "utf-8")
             dirs = parse_robots(content)
             ts_dirs.append({timestap: dirs})
-        except:
+        except TypeError as e:
+            print(e)
             pass
     return ts_dirs
 
+
+def get_clear_links(host, list_links, search_word):
+    links = re.findall(f".*?.{host[4:]}.*/{search_word}.txt", list_links)  # [4:] is for skipping http:// & https:// dif
+    for link in links:
+        if link.count('http') > 1:
+            links[links.index(link)] = 'http' + link.split('http')[-1]
+    return links
 
 
 def wayback_find_robots(host):
     content = requests.get(
         "http://web.archive.org/cdx/m_search/cdx?url=*.{}/*&output=txt&fl=original&collapse=urlkey".format(
-            host)).content
-    robots_files = re.findall(r".*?.%s.*/robots\.txt" % host, content)
-    return robots_files
+            host)).content.decode("utf-8")
+    robots_files = get_clear_links(host, content, 'robots')
+    contributors_files = get_clear_links(host, content, 'contributors')
+    return set(robots_files), set(contributors_files)
 
 
 def wayback_url(url, year):
@@ -120,15 +99,18 @@ def crawling_robots(endpoint):
         temp = endpoint[0:_tmp[0]]
         for i in range(len(_tmp)):
             if i in range(len(_tmp) - 1):
-                temp = temp + "." + endpoint[_tmp[i]:_tmp[i+1]]
+                temp = temp + "." + endpoint[_tmp[i]:_tmp[i + 1]]
             else:
                 temp = temp + "." + endpoint[_tmp[i]:len(endpoint)]
                 endpoint = ".*" + temp + ".*"
     else:
         endpoint = ".*" + endpoint + ".*"
-    content = requests.get(
-        "http://web.archive.org/cdx/search/cdx?url={}&matchType=prefix&from={}&to={}&output=txt&collapse=urlkey&fl=original".format(target,year_from,year_to)).content
-    files = re.findall(endpoint, content)
+    content = requests.get(f"http://web.archive.org/cdx/search/cdx?url={target}&matchType=prefix&from={year_from}&to={year_to}&output=txt&collapse=urlkey&fl=original", timeout=5000).content.decode("utf-8")
+    try:
+        files = re.findall(endpoint, content)
+        return files
+    except:
+        exit(0)
     return files
 
 
@@ -153,32 +135,41 @@ if not "-" in args.year:
 year = args.year
 target = args.input
 
-pprint("Searching for robots.txt on *.%s" % target)
+robots_txt, contrib_txt = wayback_find_robots(target)
 
-robots_txt = set(wayback_find_robots(target))
+# if len(contrib_txt) == 0:
+#     pprint("[contributors.txt] files not found!")
+if len(contrib_txt) > 0:
+    #     pprint(f"Found {len(contrib_txt)} contributors.txt on the following:")
+    for url in contrib_txt:
+        pprint(url)
 
 if len(robots_txt) == 0:
-    pprint("[ERROR] Wasn't able to find any [robots.txt] files")
-    exit()
-
-pprint("Found [robots.txt] on the following:\n\n  *- " + '\n  *- '.join(robots_txt) + "\n")
+    # pprint("[robots.txt] files not found!")
+    exit(0)
+else:
+    #     pprint(f"Found {len(robots_txt)} robots.txt on the following:")
+    for url in robots_txt:
+        pprint(url)
 
 year_from = int(year.split("-")[0])
 year_to = int(year.split("-")[1])
 
 for year in range(year_from, year_to + 1):
     for robot_file in robots_txt:
-        pprint("[%s]::[%s] Searching for [robots.txt] snapshot" % (year, robot_file))
+
         wb = wayback_url(robot_file, year)
 
         _tmp = []
         for result in wb:
             for dir_name in result[1]:
                 if dir_name not in _tmp:
-                    pprint("  |_-> " + dir_name)
+                    # pprint("[%s]::[%s] Searching for [robots.txt] snapshot" % (year, robot_file))
+                    # print("  |_-> " + dir_name)
                     if dir_name != "/":
                         for i in range(len(crawling_robots(dir_name))):
-                            pprint("  |   |_-> " + crawling_robots(dir_name)[i] + " => " + str(check_endpoint_stat(crawling_robots(dir_name)[i])))
+                            pprint(
+                                f"{dir_name}||{crawling_robots(dir_name)[i]}||{check_endpoint_stat(crawling_robots(dir_name)[i])}")
                 _tmp.append(dir_name)
 
 if args.output:
